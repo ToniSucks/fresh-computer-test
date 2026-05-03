@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Upload your project ZIP and check if it's ready to run on a fresh computer. Detects missing files, hardcoded paths, exposed secrets, and more.">
+  <title>Fresh Computer Test — Project Readiness Checker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <!-- ───────── HERO ───────── -->
+  <header class="hero" id="hero">
+    <div class="hero__glow"></div>
+    <div class="container">
+      <div class="hero__badge">v1.0 — Static Analysis</div>
+      <h1 class="hero__title">
+        <span class="hero__icon">🖥️</span>
+        Fresh Computer Test
+      </h1>
+      <p class="hero__subtitle">
+        Upload your project and check if it's ready to run on a fresh computer.
+      </p>
+    </div>
+  </header>
+
+  <!-- ───────── UPLOAD FORM ───────── -->
+  <main class="container">
+    <section class="card card--form" id="upload-section">
+      <h2 class="card__heading">
+        <span class="card__heading-icon">📦</span>
+        Check Your Project
+      </h2>
+      <form id="check-form" enctype="multipart/form-data">
+
+        <!-- ZIP upload -->
+        <div class="field" id="field-zip">
+          <label for="zip-file" class="field__label">Project ZIP</label>
+          <div class="file-drop" id="file-drop">
+            <input type="file" id="zip-file" name="zip" accept=".zip" hidden>
+            <div class="file-drop__content">
+              <span class="file-drop__icon">📁</span>
+              <p class="file-drop__text">Drag &amp; drop your ZIP here</p>
+              <p class="file-drop__subtext">or <button type="button" class="file-drop__btn" id="browse-btn">browse files</button></p>
+            </div>
+            <div class="file-drop__selected" id="file-selected" hidden>
+              <span class="file-drop__check">✅</span>
+              <span id="file-name"></span>
+              <button type="button" class="file-drop__remove" id="remove-file" title="Remove file">&times;</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Language -->
+        <div class="field" id="field-language">
+          <label for="language" class="field__label">Programming Language</label>
+          <select id="language" name="language" required>
+            <option value="" disabled selected>Select language…</option>
+            <option value="python">Python</option>
+            <option value="node">Node.js</option>
+            <option value="java">Java</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <!-- Setup command -->
+        <div class="field" id="field-setup">
+          <label for="setup-cmd" class="field__label">Setup Command</label>
+          <input type="text" id="setup-cmd" name="setupCmd" placeholder="e.g. pip install -r requirements.txt">
+        </div>
+
+        <!-- Run command -->
+        <div class="field" id="field-run">
+          <label for="run-cmd" class="field__label">Run Command</label>
+          <input type="text" id="run-cmd" name="runCmd" placeholder="e.g. python main.py" required>
+        </div>
+
+        <!-- Expected result -->
+        <div class="field" id="field-expected">
+          <label for="expected-result" class="field__label">Expected Result</label>
+          <textarea id="expected-result" name="expectedResult" rows="3" placeholder="e.g. The GUI window opens and displays the dashboard."></textarea>
+        </div>
+
+        <!-- Submit -->
+        <button type="submit" class="btn btn--primary" id="submit-btn">
+          <span class="btn__text">Check Project</span>
+          <span class="btn__loader" hidden>
+            <span class="spinner"></span> Analyzing…
+          </span>
+        </button>
+      </form>
+    </section>
+
+    <!-- ───────── REPORT ───────── -->
+    <section class="card card--report" id="report-section" hidden>
+      <h2 class="card__heading">
+        <span class="card__heading-icon">📋</span>
+        Fresh Computer Report
+      </h2>
+
+      <!-- Status badge -->
+      <div class="status-banner" id="status-banner">
+        <span class="status-banner__icon" id="status-icon"></span>
+        <span class="status-banner__label" id="status-label"></span>
+      </div>
+
+      <!-- Report lists -->
+      <div class="report-grid">
+        <div class="report-list report-list--good" id="list-good">
+          <h3 class="report-list__title"><span class="report-list__dot"></span> Good</h3>
+          <ul id="good-items"></ul>
+        </div>
+
+        <div class="report-list report-list--problems" id="list-problems">
+          <h3 class="report-list__title"><span class="report-list__dot"></span> Problems</h3>
+          <ul id="problem-items"></ul>
+        </div>
+
+        <div class="report-list report-list--warnings" id="list-warnings">
+          <h3 class="report-list__title"><span class="report-list__dot"></span> Warnings</h3>
+          <ul id="warning-items"></ul>
+        </div>
+
+        <div class="report-list report-list--suggestions" id="list-suggestions">
+          <h3 class="report-list__title"><span class="report-list__dot"></span> Suggestions</h3>
+          <ul id="suggestion-items"></ul>
+        </div>
+      </div>
+
+      <!-- File tree -->
+      <div class="file-tree" id="file-tree-section">
+        <h3 class="file-tree__title">📂 Files Found in ZIP</h3>
+        <ul class="file-tree__list" id="file-tree-list"></ul>
+      </div>
+
+      <!-- Recheck -->
+      <button type="button" class="btn btn--secondary" id="recheck-btn">↻ Check Another Project</button>
+    </section>
+  </main>
+
+  <!-- ───────── FOOTER ───────── -->
+  <footer class="footer">
+    <p>Fresh Computer Test &copy; 2026 &mdash; Version 1.0</p>
+  </footer>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
