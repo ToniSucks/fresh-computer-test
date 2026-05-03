@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════
-   Fresh Computer Test — Backend
+   Fresh Computer Test — Backend (with Auth)
    ═══════════════════════════════════════════════════ */
 
 const express = require('express');
@@ -7,12 +7,75 @@ const multer  = require('multer');
 const AdmZip  = require('adm-zip');
 const path    = require('path');
 const fs      = require('fs');
+const bcrypt  = require('bcrypt');
+const session = require('express-session');
 
-// Import our database module (see database.js for full SQL explanation)
-const db      = require('./database');
+// Import database (db = raw SQLite instance, rest are helper functions)
+const {
+  db: sqliteDb,
+  createUser, getUserByUsername, getUserById,
+  saveReport, getRecent, getById, getStats,
+} = require('./database');
+
+// Session store: saves sessions in SQLite instead of memory
+const SqliteStore = require('better-sqlite3-session-store')(session);
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+
+// Parse JSON request bodies (needed for login/register)
+app.use(express.json());
+
+/* ═══════════════════════════════════════════════════
+   SESSION MIDDLEWARE
+   ═══════════════════════════════════════════════════
+
+   A "session" is how the server remembers who you are.
+
+   1. You log in → server creates a session with your userId
+   2. Server sends back a cookie (a small token in your browser)
+   3. Every future request → browser sends the cookie automatically
+   4. Server reads the cookie → knows it's you
+
+   The session data is stored in SQLite (not in memory),
+   so it survives server restarts.
+
+   ═══════════════════════════════════════════════════ */
+
+app.use(session({
+  store: new SqliteStore({
+    client: sqliteDb,
+    expired: {
+      clear: true,
+      intervalMs: 15 * 60 * 1000, // clean up expired sessions every 15 min
+    },
+  }),
+  secret: 'fresh-computer-test-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000, // Session lasts 1 day
+    httpOnly: true,               // JavaScript can't read the cookie (security)
+    sameSite: 'lax',
+  },
+}));
+
+/* ═══════════════════════════════════════════════════
+   AUTH MIDDLEWARE
+   ═══════════════════════════════════════════════════
+
+   This is a "gatekeeper" function. We put it in front of
+   routes that require login. If the user isn't logged in,
+   they get a 401 (Unauthorized) error instead of data.
+
+   ═══════════════════════════════════════════════════ */
+
+function requireLogin(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in.' });
+  }
+  next(); // User is logged in, continue to the actual route
+}
 
 // ── Ensure uploads dir exists ──────────────────────
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -29,7 +92,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/zip' ||
         file.mimetype === 'application/x-zip-compressed' ||
@@ -44,8 +107,116 @@ const upload = multer({
 // ── Serve static frontend ──────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── API endpoint ───────────────────────────────────
-app.post('/api/check', (req, res) => {
+/* ═══════════════════════════════════════════════════
+   AUTH ROUTES
+   ═══════════════════════════════════════════════════
+
+   POST /api/register  → create account
+   POST /api/login     → start session
+   POST /api/logout    → destroy session
+   GET  /api/me        → who am I?
+
+   ═══════════════════════════════════════════════════ */
+
+// ── Register ────────────────────────────────────────
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Validate inputs
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required.' });
+    }
+
+    if (username.length < 3) {
+      return res.status(400).json({ error: 'Username must be at least 3 characters.' });
+    }
+
+    if (password.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+    }
+
+    // Hash the password
+    // bcrypt.hash(password, 10) → the 10 is "salt rounds"
+    // More rounds = slower but more secure. 10 is standard.
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Save to database
+    const userId = createUser(username.trim(), passwordHash);
+
+    // Automatically log them in after registering
+    req.session.userId = userId;
+
+    res.json({ message: 'Account created!', user: { id: userId, username: username.trim() } });
+  } catch (err) {
+    // UNIQUE constraint violation = username already taken
+    if (err.message?.includes('UNIQUE constraint')) {
+      return res.status(409).json({ error: 'Username already taken.' });
+    }
+    console.error('Register error:', err);
+    res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
+// ── Login ───────────────────────────────────────────
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required.' });
+    }
+
+    // Find the user in the database
+    const user = getUserByUsername(username.trim());
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password.' });
+    }
+
+    // Compare the provided password with the stored hash
+    // bcrypt.compare does: hash(password) === stored_hash
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      return res.status(401).json({ error: 'Invalid username or password.' });
+    }
+
+    // Start a session (save userId in the session)
+    req.session.userId = user.id;
+
+    res.json({ message: 'Logged in!', user: { id: user.id, username: user.username } });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed.' });
+  }
+});
+
+// ── Logout ──────────────────────────────────────────
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie('connect.sid');
+    res.json({ message: 'Logged out.' });
+  });
+});
+
+// ── Who am I? ───────────────────────────────────────
+app.get('/api/me', (req, res) => {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Not logged in.' });
+  }
+
+  const user = getUserById(req.session.userId);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found.' });
+  }
+
+  res.json({ id: user.id, username: user.username });
+});
+
+/* ═══════════════════════════════════════════════════
+   CHECK ENDPOINT (now requires login)
+   ═══════════════════════════════════════════════════ */
+
+app.post('/api/check', requireLogin, (req, res) => {
   upload.single('zip')(req, res, (multerErr) => {
     if (multerErr) {
       if (multerErr.code === 'LIMIT_FILE_SIZE') {
@@ -53,7 +224,6 @@ app.post('/api/check', (req, res) => {
       }
       return res.status(400).json({ error: multerErr.message || 'Upload failed.' });
     }
-
     handleCheck(req, res);
   });
 });
@@ -70,19 +240,15 @@ function handleCheck(req, res) {
     const runCmd         = (req.body.runCmd || '').trim();
     const expectedResult = (req.body.expectedResult || '').trim();
 
-    // Open ZIP and list entries
     const zip = new AdmZip(zipPath);
     const entries = zip.getEntries();
 
-    // Build flat file list (skip directories, strip leading folder if present)
     const files = entries
       .filter(e => !e.isDirectory)
       .map(e => e.entryName);
 
-    // Normalise paths: remove a common single top-level folder prefix
     const normFiles = normaliseFilePaths(files);
 
-    // ── Run all checks ──────────────────────────────
     const good        = [];
     const problems    = [];
     const warnings    = [];
@@ -95,7 +261,6 @@ function handleCheck(req, res) {
     checkHardcodedPaths(zip, entries, normFiles, problems, suggestions);
     checkExpectedResult(expectedResult, warnings, suggestions);
 
-    // ── Determine status ────────────────────────────
     let status;
     if (problems.length > 0) {
       status = 'Needs Attention';
@@ -107,9 +272,8 @@ function handleCheck(req, res) {
 
     const report = { status, good, problems, warnings, suggestions, files: normFiles };
 
-    // ── Save to database ────────────────────────────
-    // req.file.originalname = the filename the user uploaded (e.g. "csc111-project-2.zip")
-    const reportId = db.saveReport({
+    // Save to database — linked to the logged-in user
+    const reportId = saveReport(req.session.userId, {
       projectName: req.file.originalname,
       language,
       setupCmd: (req.body.setupCmd || '').trim(),
@@ -123,23 +287,20 @@ function handleCheck(req, res) {
       files: normFiles,
     });
 
-    // Include the report ID in the response so the frontend can link to it
     report.id = reportId;
     res.json(report);
   } catch (err) {
     console.error('Analysis error:', err);
     res.status(500).json({ error: 'Failed to analyse the ZIP file.' });
   } finally {
-    // Clean up uploaded file
     fs.unlink(zipPath, () => {});
   }
 }
 
 /* ═══════════════════════════════════════════════════
-   CHECKS
+   CHECKS (same as before)
    ═══════════════════════════════════════════════════ */
 
-// ── Check 1: README / instructions ─────────────────
 function checkReadme(files, good, warnings, suggestions) {
   const targets = ['readme.md', 'readme.txt', 'readme', 'instructions.txt', 'run.txt'];
   const found = files.find(f => {
@@ -155,7 +316,6 @@ function checkReadme(files, good, warnings, suggestions) {
   }
 }
 
-// ── Check 2: Run-command file exists ───────────────
 function checkRunCommandFile(runCmd, files, good, problems) {
   if (!runCmd) return;
 
@@ -174,48 +334,26 @@ function checkRunCommandFile(runCmd, files, good, problems) {
   }
 }
 
-/**
- * Extract the target file from a run command.
- * Handles: python main.py, node src/index.js, java Main, etc.
- */
 function extractTargetFile(cmd) {
   const parts = cmd.trim().split(/\s+/);
   if (parts.length < 2) return null;
 
   const runner = parts[0].toLowerCase();
-  // Skip flags (start with -)
   const args = parts.slice(1).filter(p => !p.startsWith('-'));
   if (args.length === 0) return null;
 
   let file = args[0];
-
-  // For java, append .java if no extension
   if (runner === 'java' && !path.extname(file)) {
     file += '.java';
   }
-
   return file;
 }
 
-// ── Check 3: Dependency file ───────────────────────
 function checkDependencies(language, files, good, warnings, suggestions) {
   const rules = {
-    python: {
-      expected: ['requirements.txt', 'pipfile', 'pyproject.toml'],
-      label: 'requirements.txt (or Pipfile)',
-      langLabel: 'Python',
-    },
-    node: {
-      expected: ['package.json'],
-      label: 'package.json',
-      langLabel: 'Node.js',
-    },
-    java: {
-      expected: ['.java'],
-      label: '.java source files',
-      langLabel: 'Java',
-      matchExt: true,
-    },
+    python: { expected: ['requirements.txt', 'pipfile', 'pyproject.toml'], label: 'requirements.txt (or Pipfile)', langLabel: 'Python' },
+    node:   { expected: ['package.json'], label: 'package.json', langLabel: 'Node.js' },
+    java:   { expected: ['.java'], label: '.java source files', langLabel: 'Java', matchExt: true },
   };
 
   const rule = rules[language];
@@ -225,10 +363,7 @@ function checkDependencies(language, files, good, warnings, suggestions) {
   if (rule.matchExt) {
     found = files.some(f => f.toLowerCase().endsWith(rule.expected[0]));
   } else {
-    found = files.some(f => {
-      const base = path.basename(f).toLowerCase();
-      return rule.expected.includes(base);
-    });
+    found = files.some(f => rule.expected.includes(path.basename(f).toLowerCase()));
   }
 
   if (found) {
@@ -239,30 +374,22 @@ function checkDependencies(language, files, good, warnings, suggestions) {
   }
 }
 
-// ── Check 4: .env file ─────────────────────────────
 function checkEnvFile(files, problems, suggestions) {
-  const envFound = files.some(f => path.basename(f).toLowerCase() === '.env');
-  if (envFound) {
+  if (files.some(f => path.basename(f).toLowerCase() === '.env')) {
     problems.push('.env file found. This may expose API keys or passwords.');
     suggestions.push('Remove .env and include .env.example instead.');
   }
 }
 
-// ── Check 5: Hardcoded paths ───────────────────────
 const CODE_EXTENSIONS = new Set([
-  '.py', '.js', '.ts', '.jsx', '.tsx',
-  '.java', '.c', '.cpp', '.h', '.hpp',
-  '.html', '.css', '.rb', '.go', '.rs',
-  '.sh', '.bat', '.ps1',
+  '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.c', '.cpp', '.h', '.hpp',
+  '.html', '.css', '.rb', '.go', '.rs', '.sh', '.bat', '.ps1',
 ]);
 
 const PATH_PATTERNS = [
-  /[A-Z]:\\Users\\/gi,
-  /[A-Z]:\/Users\//gi,
-  /\/Users\/[a-zA-Z]/g,
-  /\/home\/[a-zA-Z]/g,
-  /OneDrive/g,
-  /[\/\\]Desktop[\/\\]/g,
+  /[A-Z]:\\Users\\/gi, /[A-Z]:\/Users\//gi,
+  /\/Users\/[a-zA-Z]/g, /\/home\/[a-zA-Z]/g,
+  /OneDrive/g, /[\/\\]Desktop[\/\\]/g,
 ];
 
 function checkHardcodedPaths(zip, entries, normFiles, problems, suggestions) {
@@ -270,34 +397,29 @@ function checkHardcodedPaths(zip, entries, normFiles, problems, suggestions) {
 
   for (const entry of entries) {
     if (entry.isDirectory) continue;
-
     const ext = path.extname(entry.entryName).toLowerCase();
     if (!CODE_EXTENSIONS.has(ext)) continue;
 
-    // Read file content (limit to first 500KB to avoid memory issues)
     let content;
     try {
       const buf = entry.getData();
-      if (buf.length > 500 * 1024) continue; // skip very large files
+      if (buf.length > 500 * 1024) continue;
       content = buf.toString('utf8');
-    } catch {
-      continue;
-    }
+    } catch { continue; }
 
     for (const pattern of PATH_PATTERNS) {
-      pattern.lastIndex = 0; // reset regex
+      pattern.lastIndex = 0;
       const match = pattern.exec(content);
       if (match) {
         const normName = normFiles.find(f => entry.entryName.endsWith(f)) || entry.entryName;
         if (!flaggedFiles.has(normName)) {
           flaggedFiles.add(normName);
-          // Get a short snippet around the match
           const start = Math.max(0, match.index - 10);
           const end   = Math.min(content.length, match.index + match[0].length + 30);
           const snippet = content.slice(start, end).replace(/\n/g, ' ').trim();
           problems.push(`Hardcoded path found in ${normName}: "${snippet}"`);
         }
-        break; // one hit per file is enough
+        break;
       }
     }
   }
@@ -307,7 +429,6 @@ function checkHardcodedPaths(zip, entries, normFiles, problems, suggestions) {
   }
 }
 
-// ── Check 6: Expected result ───────────────────────
 function checkExpectedResult(expectedResult, warnings, suggestions) {
   if (!expectedResult) {
     warnings.push('No expected result provided.');
@@ -315,66 +436,38 @@ function checkExpectedResult(expectedResult, warnings, suggestions) {
   }
 }
 
-/* ═══════════════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════════════ */
-
-/**
- * If every file starts with the same single folder prefix, strip it
- * so the listing looks cleaner (e.g. "my-project/main.py" → "main.py").
- */
 function normaliseFilePaths(files) {
   if (files.length === 0) return files;
-
   const firstSlash = files[0].indexOf('/');
   if (firstSlash === -1) return files;
-
   const prefix = files[0].slice(0, firstSlash + 1);
   const allShare = files.every(f => f.startsWith(prefix));
   if (!allShare) return files;
-
   return files.map(f => f.slice(prefix.length)).filter(f => f.length > 0);
 }
 
 /* ═══════════════════════════════════════════════════
-   API ROUTES — Reading from the database
-   ═══════════════════════════════════════════════════
-
-   These routes let you READ saved reports.
-   The main /api/check route WRITES (INSERT).
-   These routes READ (SELECT).
-
-   REST API pattern:
-     GET  /api/reports      → list of recent reports
-     GET  /api/reports/:id  → one specific report
-     GET  /api/stats        → summary statistics
-
+   REPORT ROUTES (now require login + filter by user)
    ═══════════════════════════════════════════════════ */
 
-// Get recent scan history
-// Example: GET /api/reports?limit=10
-app.get('/api/reports', (req, res) => {
+app.get('/api/reports', requireLogin, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-  const reports = db.getRecent(limit);
+  const reports = getRecent(req.session.userId, limit);
   res.json(reports);
 });
 
-// Get one report by ID
-// Example: GET /api/reports/3
-app.get('/api/reports/:id', (req, res) => {
+app.get('/api/reports/:id', requireLogin, (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid report ID.' });
 
-  const report = db.getById(id);
+  const report = getById(id, req.session.userId);
   if (!report) return res.status(404).json({ error: 'Report not found.' });
 
   res.json(report);
 });
 
-// Get dashboard stats
-// Example: GET /api/stats
-app.get('/api/stats', (req, res) => {
-  const stats = db.getStats();
+app.get('/api/stats', requireLogin, (req, res) => {
+  const stats = getStats(req.session.userId);
   res.json(stats);
 });
 

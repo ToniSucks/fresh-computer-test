@@ -61,6 +61,64 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════
+   NAVBAR
+   ═══════════════════════════════════════════════════ */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: hsla(228, 18%, 8%, .85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.navbar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 720px;
+}
+
+.navbar__brand {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-heading);
+}
+
+.navbar__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.navbar__user {
+  font-size: .88rem;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.navbar__logout {
+  background: hsla(228, 20%, 20%, .8);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: .8rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.navbar__logout:hover {
+  background: hsla(0, 84%, 60%, .15);
+  border-color: hsla(0, 84%, 60%, .3);
+  color: var(--red);
+}
+
+/* ═══════════════════════════════════════════════════
    HERO
    ═══════════════════════════════════════════════════ */
 .hero {
@@ -68,6 +126,10 @@ body {
   text-align: center;
   padding: 72px 20px 48px;
   overflow: hidden;
+}
+
+.hero--compact {
+  padding: 40px 20px 28px;
 }
 
 .hero__glow {
@@ -512,6 +574,125 @@ select option {
 }
 
 /* ═══════════════════════════════════════════════════
+   AUTH TABS
+   ═══════════════════════════════════════════════════ */
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 28px;
+  background: hsla(228, 20%, 16%, .8);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+
+.auth-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  font-family: var(--font);
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 10px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.auth-tab--active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.auth-tab:not(.auth-tab--active):hover {
+  color: var(--text);
+}
+
+/* ═══════════════════════════════════════════════════
+   HISTORY
+   ═══════════════════════════════════════════════════ */
+.history-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 20px 0;
+  font-size: .92rem;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: hsla(228, 20%, 10%, .5);
+  transition: border-color var(--transition);
+}
+
+.history-item:hover {
+  border-color: var(--border-hover);
+}
+
+.history-item__status {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.history-item__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-item__name {
+  display: block;
+  font-weight: 600;
+  font-size: .92rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item__meta {
+  font-size: .78rem;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.history-item__badge {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 4px 10px;
+  border-radius: 100px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.history-item--passed .history-item__badge {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.history-item--okay .history-item__badge {
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+.history-item--attention .history-item__badge {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+/* ═══════════════════════════════════════════════════
    FOOTER
    ═══════════════════════════════════════════════════ */
 .footer {
@@ -536,6 +717,7 @@ select option {
 
 @media (max-width: 480px) {
   .hero { padding: 48px 16px 32px; }
+  .hero--compact { padding: 28px 16px 20px; }
 
   .card {
     padding: 24px 18px;
@@ -543,4 +725,8 @@ select option {
   }
 
   .btn { padding: 12px 20px; }
+
+  .navbar__brand { font-size: .88rem; }
+
+  .history-item__badge { display: none; }
 }

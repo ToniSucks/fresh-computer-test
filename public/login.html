@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sign in to Fresh Computer Test to check your projects.">
+  <title>Login — Fresh Computer Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <header class="hero" id="hero">
+    <div class="hero__glow"></div>
+    <div class="container">
+      <div class="hero__badge">v1.0 — Static Analysis</div>
+      <h1 class="hero__title">
+        <span class="hero__icon">🖥️</span>
+        Fresh Computer Test
+      </h1>
+      <p class="hero__subtitle">
+        Upload your project and check if it's ready to run on a fresh computer.
+      </p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card card--auth" id="auth-card">
+
+      <!-- Tab switcher -->
+      <div class="auth-tabs" id="auth-tabs">
+        <button class="auth-tab auth-tab--active" data-tab="login" id="tab-login">Login</button>
+        <button class="auth-tab" data-tab="register" id="tab-register">Register</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="login-form" class="auth-form">
+        <div class="field" id="field-login-user">
+          <label for="login-username" class="field__label">Username</label>
+          <input type="text" id="login-username" name="username" placeholder="Enter your username" autocomplete="username" required>
+        </div>
+        <div class="field" id="field-login-pass">
+          <label for="login-password" class="field__label">Password</label>
+          <input type="password" id="login-password" name="password" placeholder="Enter your password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn--primary" id="login-btn">
+          <span class="btn__text">Login</span>
+          <span class="btn__loader" hidden><span class="spinner"></span> Logging in…</span>
+        </button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="register-form" class="auth-form" hidden>
+        <div class="field" id="field-reg-user">
+          <label for="reg-username" class="field__label">Username</label>
+          <input type="text" id="reg-username" name="username" placeholder="Choose a username (min. 3 characters)" autocomplete="username" required minlength="3">
+        </div>
+        <div class="field" id="field-reg-pass">
+          <label for="reg-password" class="field__label">Password</label>
+          <input type="password" id="reg-password" name="password" placeholder="Choose a password (min. 4 characters)" autocomplete="new-password" required minlength="4">
+        </div>
+        <div class="field" id="field-reg-confirm">
+          <label for="reg-confirm" class="field__label">Confirm Password</label>
+          <input type="password" id="reg-confirm" name="confirmPassword" placeholder="Re-enter your password" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn btn--primary" id="register-btn">
+          <span class="btn__text">Create Account</span>
+          <span class="btn__loader" hidden><span class="spinner"></span> Creating…</span>
+        </button>
+      </form>
+
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Fresh Computer Test &copy; 2026 &mdash; Version 1.0</p>
+  </footer>
+
+  <script src="/js/auth.js"></script>
+</body>
+</html>

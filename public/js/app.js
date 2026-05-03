@@ -1,9 +1,37 @@
 /* ═══════════════════════════════════════════════════
-   Fresh Computer Test — Frontend Logic
+   Fresh Computer Test — Frontend Logic (with Auth)
    ═══════════════════════════════════════════════════ */
 
 (function () {
   'use strict';
+
+  // ── Auth check: redirect to login if not logged in ──
+  async function checkAuth() {
+    try {
+      const res = await fetch('/api/me');
+      if (!res.ok) {
+        window.location.href = '/login.html';
+        return null;
+      }
+      const user = await res.json();
+      document.getElementById('navbar-user').textContent = `👤 ${user.username}`;
+      return user;
+    } catch {
+      window.location.href = '/login.html';
+      return null;
+    }
+  }
+
+  // Run auth check immediately
+  checkAuth().then(user => {
+    if (user) loadHistory();
+  });
+
+  // ── Logout ────────────────────────────────────────
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login.html';
+  });
 
   // ── DOM refs ──────────────────────────────────────
   const form          = document.getElementById('check-form');
@@ -51,7 +79,6 @@
     hideSelectedFile();
   });
 
-  // Drag & drop
   ['dragenter', 'dragover'].forEach(evt =>
     fileDrop.addEventListener(evt, (e) => { e.preventDefault(); fileDrop.classList.add('drag-over'); })
   );
@@ -81,7 +108,6 @@
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    // ── Client-side validation ──────────────────────
     if (!zipInput.files.length) {
       showFieldError('field-zip', 'Please select a ZIP file.');
       return;
@@ -98,7 +124,6 @@
     }
     clearFieldErrors();
 
-    // Show loading state
     btnText.hidden = true;
     btnLoader.hidden = false;
     submitBtn.disabled = true;
@@ -113,6 +138,11 @@
     try {
       const res = await fetch('/api/check', { method: 'POST', body: formData });
 
+      if (res.status === 401) {
+        window.location.href = '/login.html';
+        return;
+      }
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Server error' }));
         throw new Error(err.error || `HTTP ${res.status}`);
@@ -120,6 +150,9 @@
 
       const report = await res.json();
       renderReport(report);
+
+      // Refresh history after a new scan
+      loadHistory();
     } catch (err) {
       alert('Error: ' + err.message);
     } finally {
@@ -131,7 +164,6 @@
 
   // ── Render report ─────────────────────────────────
   function renderReport(report) {
-    // Status banner
     statusBanner.className = 'status-banner';
     if (report.status === 'Passed') {
       statusBanner.classList.add('status-banner--passed');
@@ -145,19 +177,16 @@
     }
     statusLabel.textContent = report.status;
 
-    // Lists
     fillList(goodItems, report.good);
     fillList(problemItems, report.problems);
     fillList(warningItems, report.warnings);
     fillList(suggestionItems, report.suggestions);
 
-    // Toggle empty lists
     toggleEmpty(listGood, report.good);
     toggleEmpty(listProblems, report.problems);
     toggleEmpty(listWarnings, report.warnings);
     toggleEmpty(listSuggestions, report.suggestions);
 
-    // File tree
     fileTreeList.innerHTML = '';
     (report.files || []).forEach(f => {
       const li = document.createElement('li');
@@ -165,11 +194,9 @@
       fileTreeList.appendChild(li);
     });
 
-    // Show report, scroll to it
     reportSection.hidden = false;
-    // Re-trigger animation
     reportSection.style.animation = 'none';
-    reportSection.offsetHeight; // reflow
+    reportSection.offsetHeight;
     reportSection.style.animation = '';
     reportSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -184,14 +211,10 @@
   }
 
   function toggleEmpty(container, items) {
-    if (!items || items.length === 0) {
-      container.classList.add('is-empty');
-    } else {
-      container.classList.remove('is-empty');
-    }
+    container.classList.toggle('is-empty', !items || items.length === 0);
   }
 
-  // ── Recheck button ───────────────────────────────
+  // ── Recheck ───────────────────────────────────────
   recheckBtn.addEventListener('click', () => {
     reportSection.hidden = true;
     form.reset();
@@ -200,7 +223,60 @@
     document.getElementById('hero').scrollIntoView({ behavior: 'smooth' });
   });
 
-  // ── Inline validation helpers ───────────────────
+  // ── History ───────────────────────────────────────
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/reports?limit=10');
+      if (!res.ok) return;
+
+      const reports = await res.json();
+      const listEl = document.getElementById('history-list');
+      const emptyEl = document.getElementById('history-empty');
+
+      if (reports.length === 0) {
+        emptyEl.hidden = false;
+        listEl.innerHTML = '';
+        return;
+      }
+
+      emptyEl.hidden = true;
+      listEl.innerHTML = reports.map(r => {
+        const statusClass =
+          r.status === 'Passed' ? 'history-item--passed' :
+          r.status === 'Mostly Okay' ? 'history-item--okay' :
+          'history-item--attention';
+
+        const statusEmoji =
+          r.status === 'Passed' ? '✅' :
+          r.status === 'Mostly Okay' ? '⚠️' : '🚨';
+
+        const date = new Date(r.createdAt + 'Z').toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        });
+
+        return `
+          <div class="history-item ${statusClass}">
+            <span class="history-item__status">${statusEmoji}</span>
+            <div class="history-item__info">
+              <span class="history-item__name">${escapeHtml(r.projectName)}</span>
+              <span class="history-item__meta">${r.language} · ${date}</span>
+            </div>
+            <span class="history-item__badge">${r.status}</span>
+          </div>
+        `;
+      }).join('');
+    } catch {
+      // Silently fail — history is a nice-to-have
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ── Validation helpers ────────────────────────────
   function showFieldError(fieldId, message) {
     clearFieldErrors();
     const field = document.getElementById(fieldId);

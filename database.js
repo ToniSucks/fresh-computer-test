@@ -1,209 +1,215 @@
 /* ═══════════════════════════════════════════════════
-   DATABASE SETUP — Teaching Guide
+   DATABASE SETUP — With Users & Auth
    ═══════════════════════════════════════════════════
 
-   SQL = Structured Query Language
-   It's how you talk to a database. Think of it like
-   a spreadsheet that you control with text commands.
+   Two tables now:
+     1. users   — stores accounts (username + hashed password)
+     2. reports — stores scan results, linked to a user via user_id
 
-   SQLite stores everything in ONE file (reports.db).
-   No username, no password, no server to install.
-   Perfect for learning and small projects.
+   The "user_id" column in reports is a FOREIGN KEY.
+   Think of it like a link: each report points to the user who created it.
 
    ═══════════════════════════════════════════════════ */
 
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// This creates (or opens) a file called "reports.db" in your project folder.
-// All your data lives in this single file.
 const DB_PATH = path.join(__dirname, 'reports.db');
 const db = new Database(DB_PATH);
 
-// WAL mode = faster for web apps (allows reading while writing)
 db.pragma('journal_mode = WAL');
 
 /* ═══════════════════════════════════════════════════
-   STEP 1: CREATE THE TABLE
+   TABLE 1: users
    ═══════════════════════════════════════════════════
 
-   A "table" is like a spreadsheet tab.
-   Each "column" is a category (like a spreadsheet column).
-   Each "row" is one record (one scan report).
+   UNIQUE on username = the database itself rejects duplicates.
+   If you try INSERT with a username that exists, it errors.
+   We catch that error and show "Username already taken."
 
-   SQL command: CREATE TABLE
-   
-   Column types:
-     INTEGER  = whole number (1, 2, 3...)
-     TEXT     = string ("hello", "python"...)
-     DATETIME = date and time
+   ═══════════════════════════════════════════════════ */
 
-   Special keywords:
-     PRIMARY KEY    = unique ID for each row (like a row number)
-     AUTOINCREMENT  = the database assigns the ID automatically
-     NOT NULL       = this field can't be empty
-     DEFAULT        = value to use if none is provided
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE,
+    password_hash TEXT    NOT NULL,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+/* ═══════════════════════════════════════════════════
+   TABLE 2: reports (now with user_id)
+   ═══════════════════════════════════════════════════
+
+   REFERENCES users(id) = foreign key constraint.
+   This means user_id MUST match an existing user's id.
+   The database won't let you insert a report for a
+   user that doesn't exist.
 
    ═══════════════════════════════════════════════════ */
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS reports (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_name  TEXT    NOT NULL,
-    language      TEXT    NOT NULL,
-    setup_cmd     TEXT    DEFAULT '',
-    run_cmd       TEXT    NOT NULL,
-    expected_result TEXT  DEFAULT '',
-    status        TEXT    NOT NULL,
-    good          TEXT    DEFAULT '[]',
-    problems      TEXT    DEFAULT '[]',
-    warnings      TEXT    DEFAULT '[]',
-    suggestions   TEXT    DEFAULT '[]',
-    files         TEXT    DEFAULT '[]',
-    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    project_name    TEXT    NOT NULL,
+    language        TEXT    NOT NULL,
+    setup_cmd       TEXT    DEFAULT '',
+    run_cmd         TEXT    NOT NULL,
+    expected_result TEXT    DEFAULT '',
+    status          TEXT    NOT NULL,
+    good            TEXT    DEFAULT '[]',
+    problems        TEXT    DEFAULT '[]',
+    warnings        TEXT    DEFAULT '[]',
+    suggestions     TEXT    DEFAULT '[]',
+    files           TEXT    DEFAULT '[]',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
 
-/*
-   "IF NOT EXISTS" means: only create the table if it doesn't
-   already exist. This way you can restart the server without
-   losing your data or getting an error.
-
-   We store arrays (good, problems, etc.) as JSON strings
-   because SQLite doesn't have a native array type.
-   So ["item1", "item2"] is stored as the text '["item1","item2"]'
-*/
+// Enable foreign key enforcement (SQLite has it off by default!)
+db.pragma('foreign_keys = ON');
 
 /* ═══════════════════════════════════════════════════
-   STEP 2: PREPARE SQL STATEMENTS
-   ═══════════════════════════════════════════════════
-
-   "Prepared statements" are pre-compiled SQL commands.
-   The ? marks are placeholders — you fill them in later.
-   This is IMPORTANT for security (prevents SQL injection).
-
-   Never do this:  `INSERT INTO reports VALUES ('${userInput}')`
-   Always do this: `INSERT INTO reports VALUES (?)`  + pass userInput separately
-
+   PREPARED STATEMENTS
    ═══════════════════════════════════════════════════ */
 
-// INSERT = add a new row to the table
-// Each ? will be replaced with actual values when we call .run()
-const insertReport = db.prepare(`
-  INSERT INTO reports (project_name, language, setup_cmd, run_cmd, expected_result, status, good, problems, warnings, suggestions, files)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+// ── User queries ────────────────────────────────────
+
+// Register: insert a new user
+const insertUser = db.prepare(`
+  INSERT INTO users (username, password_hash)
+  VALUES (?, ?)
 `);
 
-// SELECT = read data from the table
-// ORDER BY created_at DESC = newest first
-// LIMIT ? = only return this many rows
-const getRecentReports = db.prepare(`
+// Login: find user by username
+const findUserByUsername = db.prepare(`
+  SELECT * FROM users WHERE username = ?
+`);
+
+// Get user by ID (for session lookups)
+const findUserById = db.prepare(`
+  SELECT id, username, created_at FROM users WHERE id = ?
+`);
+
+// ── Report queries (now filtered by user_id) ────────
+
+// Save a report linked to a user
+const insertReport = db.prepare(`
+  INSERT INTO reports (user_id, project_name, language, setup_cmd, run_cmd, expected_result, status, good, problems, warnings, suggestions, files)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+// Get recent reports for ONE user only
+// This is the key difference from before:
+//   WHERE user_id = ?  ← only show THIS user's reports
+const getRecentByUser = db.prepare(`
   SELECT * FROM reports
+  WHERE user_id = ?
   ORDER BY created_at DESC
   LIMIT ?
 `);
 
-// Get one specific report by its ID
-const getReportById = db.prepare(`
+// Get one report (only if it belongs to this user)
+const getReportByIdAndUser = db.prepare(`
   SELECT * FROM reports
-  WHERE id = ?
+  WHERE id = ? AND user_id = ?
 `);
 
-// COUNT = how many rows match
-const getReportCount = db.prepare(`
-  SELECT COUNT(*) as total FROM reports
+// Count reports for one user
+const getReportCountByUser = db.prepare(`
+  SELECT COUNT(*) as total FROM reports WHERE user_id = ?
 `);
 
-// Get counts grouped by status (how many Passed, Mostly Okay, Needs Attention)
-const getStatusCounts = db.prepare(`
+// Status breakdown for one user
+const getStatusCountsByUser = db.prepare(`
   SELECT status, COUNT(*) as count
   FROM reports
+  WHERE user_id = ?
   GROUP BY status
 `);
 
 /* ═══════════════════════════════════════════════════
-   STEP 3: EXPORT FUNCTIONS
-   ═══════════════════════════════════════════════════
-
-   We wrap the SQL statements in normal JavaScript functions
-   so the rest of our code doesn't need to know SQL.
-
+   EXPORTED FUNCTIONS
    ═══════════════════════════════════════════════════ */
 
+// ── Auth functions ──────────────────────────────────
+
 /**
- * Save a scan report to the database.
- *
- * @param {object} report - The report data
- * @returns {number} The ID of the saved report
- *
- * Example:
- *   const id = saveReport({
- *     projectName: 'my-app.zip',
- *     language: 'python',
- *     setupCmd: 'pip install -r requirements.txt',
- *     runCmd: 'python main.py',
- *     expectedResult: 'GUI opens',
- *     status: 'Passed',
- *     good: ['Found README.md'],
- *     problems: [],
- *     warnings: [],
- *     suggestions: [],
- *     files: ['main.py', 'README.md']
- *   });
- *   // id = 1 (first report), 2 (second), etc.
+ * Create a new user account.
+ * @param {string} username
+ * @param {string} passwordHash - already hashed by bcrypt
+ * @returns {number} The new user's ID
+ * @throws If username is already taken (UNIQUE constraint)
  */
-function saveReport(report) {
+function createUser(username, passwordHash) {
+  const result = insertUser.run(username, passwordHash);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Find a user by username (for login).
+ * @returns {object|undefined} { id, username, password_hash, created_at }
+ */
+function getUserByUsername(username) {
+  return findUserByUsername.get(username);
+}
+
+/**
+ * Find a user by ID (for session validation).
+ * @returns {object|undefined} { id, username, created_at }
+ */
+function getUserById(id) {
+  return findUserById.get(id);
+}
+
+// ── Report functions (now require userId) ───────────
+
+/**
+ * Save a report linked to a user.
+ */
+function saveReport(userId, report) {
   const result = insertReport.run(
+    userId,
     report.projectName,
     report.language,
     report.setupCmd || '',
     report.runCmd,
     report.expectedResult || '',
     report.status,
-    JSON.stringify(report.good),        // Convert array → JSON string
+    JSON.stringify(report.good),
     JSON.stringify(report.problems),
     JSON.stringify(report.warnings),
     JSON.stringify(report.suggestions),
     JSON.stringify(report.files)
   );
-
-  // result.lastInsertRowid = the auto-generated ID
   return Number(result.lastInsertRowid);
 }
 
 /**
- * Get recent reports from the database.
- *
- * @param {number} limit - How many reports to return (default 20)
- * @returns {Array} Array of report objects
+ * Get recent reports for a specific user.
  */
-function getRecent(limit = 20) {
-  const rows = getRecentReports.all(limit);
-
-  // Parse JSON strings back into arrays
+function getRecent(userId, limit = 20) {
+  const rows = getRecentByUser.all(userId, limit);
   return rows.map(parseReportRow);
 }
 
 /**
- * Get a single report by ID.
- *
- * @param {number} id - The report ID
- * @returns {object|null} The report, or null if not found
+ * Get a single report by ID (only if user owns it).
  */
-function getById(id) {
-  const row = getReportById.get(id);
+function getById(reportId, userId) {
+  const row = getReportByIdAndUser.get(reportId, userId);
   if (!row) return null;
   return parseReportRow(row);
 }
 
 /**
- * Get dashboard statistics.
- *
- * @returns {object} { total, passed, mostlyOkay, needsAttention }
+ * Get dashboard stats for a specific user.
  */
-function getStats() {
-  const { total } = getReportCount.get();
-  const statuses = getStatusCounts.all();
+function getStats(userId) {
+  const { total } = getReportCountByUser.get(userId);
+  const statuses = getStatusCountsByUser.all(userId);
 
   const stats = { total, passed: 0, mostlyOkay: 0, needsAttention: 0 };
   for (const row of statuses) {
@@ -211,14 +217,10 @@ function getStats() {
     else if (row.status === 'Mostly Okay') stats.mostlyOkay = row.count;
     else if (row.status === 'Needs Attention') stats.needsAttention = row.count;
   }
-
   return stats;
 }
 
-/**
- * Helper: convert a database row back into a nice object.
- * Parses JSON strings back into arrays.
- */
+/** Parse a database row into a clean JS object. */
 function parseReportRow(row) {
   return {
     id: row.id,
@@ -237,5 +239,9 @@ function parseReportRow(row) {
   };
 }
 
-// Export everything so server.js can use it
-module.exports = { saveReport, getRecent, getById, getStats };
+// Export the raw db instance too (needed for session store)
+module.exports = {
+  db,
+  createUser, getUserByUsername, getUserById,
+  saveReport, getRecent, getById, getStats,
+};

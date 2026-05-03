@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Upload your project ZIP and check if it's ready to run on a fresh computer. Detects missing files, hardcoded paths, exposed secrets, and more.">
+  <meta name="description" content="Upload your project ZIP and check if it's ready to run on a fresh computer.">
   <title>Fresh Computer Test — Project Readiness Checker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,11 +12,21 @@
 </head>
 <body>
 
+  <!-- ───────── NAV BAR ───────── -->
+  <nav class="navbar" id="navbar">
+    <div class="navbar__inner container">
+      <span class="navbar__brand">🖥️ Fresh Computer Test</span>
+      <div class="navbar__right">
+        <span class="navbar__user" id="navbar-user"></span>
+        <button class="navbar__logout" id="logout-btn" title="Log out">Logout</button>
+      </div>
+    </div>
+  </nav>
+
   <!-- ───────── HERO ───────── -->
-  <header class="hero" id="hero">
+  <header class="hero hero--compact" id="hero">
     <div class="hero__glow"></div>
     <div class="container">
-      <div class="hero__badge">v1.0 — Static Analysis</div>
       <h1 class="hero__title">
         <span class="hero__icon">🖥️</span>
         Fresh Computer Test
@@ -36,7 +46,6 @@
       </h2>
       <form id="check-form" enctype="multipart/form-data">
 
-        <!-- ZIP upload -->
         <div class="field" id="field-zip">
           <label for="zip-file" class="field__label">Project ZIP</label>
           <div class="file-drop" id="file-drop">
@@ -54,10 +63,9 @@
           </div>
         </div>
 
-        <!-- Language -->
         <div class="field" id="field-language">
           <label for="language" class="field__label">Programming Language</label>
-          <select id="language" name="language" required>
+          <select id="language" name="language">
             <option value="" disabled selected>Select language…</option>
             <option value="python">Python</option>
             <option value="node">Node.js</option>
@@ -66,25 +74,21 @@
           </select>
         </div>
 
-        <!-- Setup command -->
         <div class="field" id="field-setup">
           <label for="setup-cmd" class="field__label">Setup Command</label>
           <input type="text" id="setup-cmd" name="setupCmd" placeholder="e.g. pip install -r requirements.txt">
         </div>
 
-        <!-- Run command -->
         <div class="field" id="field-run">
           <label for="run-cmd" class="field__label">Run Command</label>
-          <input type="text" id="run-cmd" name="runCmd" placeholder="e.g. python main.py" required>
+          <input type="text" id="run-cmd" name="runCmd" placeholder="e.g. python main.py">
         </div>
 
-        <!-- Expected result -->
         <div class="field" id="field-expected">
           <label for="expected-result" class="field__label">Expected Result</label>
           <textarea id="expected-result" name="expectedResult" rows="3" placeholder="e.g. The GUI window opens and displays the dashboard."></textarea>
         </div>
 
-        <!-- Submit -->
         <button type="submit" class="btn btn--primary" id="submit-btn">
           <span class="btn__text">Check Project</span>
           <span class="btn__loader" hidden>
@@ -101,13 +105,11 @@
         Fresh Computer Report
       </h2>
 
-      <!-- Status badge -->
       <div class="status-banner" id="status-banner">
         <span class="status-banner__icon" id="status-icon"></span>
         <span class="status-banner__label" id="status-label"></span>
       </div>
 
-      <!-- Report lists -->
       <div class="report-grid">
         <div class="report-list report-list--good" id="list-good">
           <h3 class="report-list__title"><span class="report-list__dot"></span> Good</h3>
@@ -130,18 +132,27 @@
         </div>
       </div>
 
-      <!-- File tree -->
       <div class="file-tree" id="file-tree-section">
         <h3 class="file-tree__title">📂 Files Found in ZIP</h3>
         <ul class="file-tree__list" id="file-tree-list"></ul>
       </div>
 
-      <!-- Recheck -->
       <button type="button" class="btn btn--secondary" id="recheck-btn">↻ Check Another Project</button>
+    </section>
+
+    <!-- ───────── HISTORY ───────── -->
+    <section class="card card--history" id="history-section">
+      <h2 class="card__heading">
+        <span class="card__heading-icon">📊</span>
+        Your Recent Scans
+      </h2>
+      <div id="history-empty" class="history-empty">
+        <p>No scans yet. Upload a project above to get started!</p>
+      </div>
+      <div class="history-list" id="history-list"></div>
     </section>
   </main>
 
-  <!-- ───────── FOOTER ───────── -->
   <footer class="footer">
     <p>Fresh Computer Test &copy; 2026 &mdash; Version 1.0</p>
   </footer>
