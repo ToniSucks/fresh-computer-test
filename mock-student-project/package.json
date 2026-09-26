@@ -1,0 +1,9 @@
+{
+  "name": "mock-student-project",
+  "version": "1.0.0",
+  "description": "A sample project to test the Fresh Computer Validator",
+  "main": "main.js",
+  "dependencies": {
+    "colors": "^1.4.0"
+  }
+}

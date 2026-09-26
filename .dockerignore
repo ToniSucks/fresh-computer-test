@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+reports.db
+reports.db-shm
+reports.db-wal
+uploads/
+test-zips/
+.env
+.git

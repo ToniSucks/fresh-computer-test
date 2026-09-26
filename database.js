@@ -64,9 +64,21 @@ db.exec(`
     warnings        TEXT    DEFAULT '[]',
     suggestions     TEXT    DEFAULT '[]',
     files           TEXT    DEFAULT '[]',
+    execution_status TEXT   DEFAULT 'Not Run',
+    execution_output TEXT   DEFAULT '',
+    file_contents   TEXT    DEFAULT '{}',
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+// Migration for existing tables
+try {
+  db.exec("ALTER TABLE reports ADD COLUMN execution_status TEXT DEFAULT 'Not Run'");
+  db.exec("ALTER TABLE reports ADD COLUMN execution_output TEXT DEFAULT ''");
+} catch (err) {}
+try {
+  db.exec("ALTER TABLE reports ADD COLUMN file_contents TEXT DEFAULT '{}'");
+} catch (err) {}
 
 // Enable foreign key enforcement (SQLite has it off by default!)
 db.pragma('foreign_keys = ON');
@@ -97,8 +109,11 @@ const findUserById = db.prepare(`
 
 // Save a report linked to a user
 const insertReport = db.prepare(`
-  INSERT INTO reports (user_id, project_name, language, setup_cmd, run_cmd, expected_result, status, good, problems, warnings, suggestions, files)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO reports (
+    user_id, project_name, language, setup_cmd, run_cmd, expected_result, status, 
+    good, problems, warnings, suggestions, files, execution_status, execution_output, file_contents
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 // Get recent reports for ONE user only
@@ -115,6 +130,19 @@ const getRecentByUser = db.prepare(`
 const getReportByIdAndUser = db.prepare(`
   SELECT * FROM reports
   WHERE id = ? AND user_id = ?
+`);
+
+// Delete one report (only if it belongs to this user)
+const deleteReportByIdAndUser = db.prepare(`
+  DELETE FROM reports
+  WHERE id = ? AND user_id = ?
+`);
+
+// Update execution results for a report
+const updateReportExecution = db.prepare(`
+  UPDATE reports 
+  SET execution_status = ?, execution_output = ?
+  WHERE id = ?
 `);
 
 // Count reports for one user
@@ -182,7 +210,10 @@ function saveReport(userId, report) {
     JSON.stringify(report.problems),
     JSON.stringify(report.warnings),
     JSON.stringify(report.suggestions),
-    JSON.stringify(report.files)
+    JSON.stringify(report.files),
+    report.executionStatus || 'Not Run',
+    report.executionOutput || '',
+    JSON.stringify(report.fileContents || {})
   );
   return Number(result.lastInsertRowid);
 }
@@ -202,6 +233,21 @@ function getById(reportId, userId) {
   const row = getReportByIdAndUser.get(reportId, userId);
   if (!row) return null;
   return parseReportRow(row);
+}
+
+/**
+ * Delete a single report by ID (only if user owns it).
+ */
+function deleteReport(reportId, userId) {
+  const result = deleteReportByIdAndUser.run(reportId, userId);
+  return result.changes > 0;
+}
+
+/**
+ * Update the execution results for a pending report.
+ */
+function updateExecutionResults(reportId, status, output) {
+  updateReportExecution.run(status, output, reportId);
 }
 
 /**
@@ -235,6 +281,9 @@ function parseReportRow(row) {
     warnings: JSON.parse(row.warnings),
     suggestions: JSON.parse(row.suggestions),
     files: JSON.parse(row.files),
+    executionStatus: row.execution_status,
+    executionOutput: row.execution_output,
+    fileContents: row.file_contents ? JSON.parse(row.file_contents) : {},
     createdAt: row.created_at,
   };
 }
@@ -243,5 +292,6 @@ function parseReportRow(row) {
 module.exports = {
   db,
   createUser, getUserByUsername, getUserById,
-  saveReport, getRecent, getById, getStats,
+  saveReport, getRecent, getById, deleteReport, getStats,
+  updateExecutionResults
 };

@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -46,14 +47,19 @@
       </h2>
       <form id="check-form" enctype="multipart/form-data">
 
+        <div class="field" id="field-project-name">
+          <label for="project-name" class="field__label">Project Name</label>
+          <input type="text" id="project-name" name="projectName" placeholder="e.g. My Awesome Project" required>
+        </div>
+
         <div class="field" id="field-zip">
-          <label for="zip-file" class="field__label">Project ZIP</label>
+          <label for="zip-file" class="field__label">Project Files</label>
           <div class="file-drop" id="file-drop">
-            <input type="file" id="zip-file" name="zip" accept=".zip" hidden>
+            <input type="file" id="zip-file" name="zip" webkitdirectory directory multiple hidden>
             <div class="file-drop__content">
               <span class="file-drop__icon">📁</span>
-              <p class="file-drop__text">Drag &amp; drop your ZIP here</p>
-              <p class="file-drop__subtext">or <button type="button" class="file-drop__btn" id="browse-btn">browse files</button></p>
+              <p class="file-drop__text">Drag &amp; drop your project folder here</p>
+              <p class="file-drop__subtext">or <button type="button" class="file-drop__btn" id="browse-btn">browse folder</button></p>
             </div>
             <div class="file-drop__selected" id="file-selected" hidden>
               <span class="file-drop__check">✅</span>
@@ -82,6 +88,7 @@
         <div class="field" id="field-run">
           <label for="run-cmd" class="field__label">Run Command</label>
           <input type="text" id="run-cmd" name="runCmd" placeholder="e.g. python main.py">
+          <p class="field__hint"><strong>Tip:</strong> If your project uses a GUI (like Pygame), prefix your command with <code>SDL_VIDEODRIVER=dummy</code> to run it headlessly.</p>
         </div>
 
         <div class="field" id="field-expected">
@@ -92,7 +99,7 @@
         <button type="submit" class="btn btn--primary" id="submit-btn">
           <span class="btn__text">Check Project</span>
           <span class="btn__loader" hidden>
-            <span class="spinner"></span> Analyzing…
+            <span class="spinner"></span> Running in Docker…
           </span>
         </button>
       </form>
@@ -137,7 +144,12 @@
         <ul class="file-tree__list" id="file-tree-list"></ul>
       </div>
 
-      <button type="button" class="btn btn--secondary" id="recheck-btn">↻ Check Another Project</button>
+      <div class="execution-results" id="execution-results-section" style="margin-top: 2rem;">
+        <h3 class="file-tree__title">🐳 Docker Execution Results: <span id="execution-status-badge"></span></h3>
+        <pre class="execution-output" id="execution-output" style="background: #1e1e1e; color: #00ff00; padding: 1rem; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; margin-top: 1rem;"></pre>
+      </div>
+
+      <button type="button" class="btn btn--secondary" id="recheck-btn" style="margin-top: 2rem;">↻ Check Another Project</button>
     </section>
 
     <!-- ───────── HISTORY ───────── -->
@@ -157,6 +169,25 @@
     <p>Fresh Computer Test &copy; 2026 &mdash; Version 1.0</p>
   </footer>
 
+  <!-- Code Viewer Modal -->
+  <div id="code-modal" class="modal" hidden>
+    <div class="modal__overlay" id="modal-overlay"></div>
+    <div class="modal__content card">
+      <div class="modal__header">
+        <h3 class="modal__title" id="modal-title">Code Viewer</h3>
+        <button class="modal__close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal__body">
+        <pre><code id="modal-code"></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

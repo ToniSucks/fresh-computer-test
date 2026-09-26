@@ -9,12 +9,17 @@ const path    = require('path');
 const fs      = require('fs');
 const bcrypt  = require('bcrypt');
 const session = require('express-session');
+const { exec, spawn, execSync } = require('child_process');
+const util = require('util');
+
+const execPromise = util.promisify(exec);
 
 // Import database (db = raw SQLite instance, rest are helper functions)
 const {
   db: sqliteDb,
   createUser, getUserByUsername, getUserById,
-  saveReport, getRecent, getById, getStats,
+  saveReport, getRecent, getById, deleteReport, getStats,
+  updateExecutionResults
 } = require('./database');
 
 // Session store: saves sessions in SQLite instead of memory
@@ -92,7 +97,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 200 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/zip' ||
         file.mimetype === 'application/x-zip-compressed' ||
@@ -228,7 +233,7 @@ app.post('/api/check', requireLogin, (req, res) => {
   });
 });
 
-function handleCheck(req, res) {
+async function handleCheck(req, res) {
   const zipPath = req.file?.path;
 
   if (!zipPath) {
@@ -236,6 +241,7 @@ function handleCheck(req, res) {
   }
 
   try {
+    const projectName    = (req.body.projectName || req.file.originalname).trim();
     const language       = (req.body.language || '').toLowerCase();
     const runCmd         = (req.body.runCmd || '').trim();
     const expectedResult = (req.body.expectedResult || '').trim();
@@ -270,13 +276,28 @@ function handleCheck(req, res) {
       status = 'Passed';
     }
 
-    const report = { status, good, problems, warnings, suggestions, files: normFiles };
+    // Extract file contents for code viewer (max 100KB per file)
+    const fileContents = {};
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      const ext = path.extname(entry.entryName).toLowerCase();
+      if (!CODE_EXTENSIONS.has(ext)) continue;
+      try {
+        const buf = entry.getData();
+        if (buf.length <= 100 * 1024) {
+          const normName = entry.entryName.replace(/\\/g, '/');
+          fileContents[normName] = buf.toString('utf8');
+        }
+      } catch (e) {}
+    }
+
+    const setupCmd = (req.body.setupCmd || '').trim();
 
     // Save to database — linked to the logged-in user
     const reportId = saveReport(req.session.userId, {
-      projectName: req.file.originalname,
+      projectName,
       language,
-      setupCmd: (req.body.setupCmd || '').trim(),
+      setupCmd,
       runCmd,
       expectedResult,
       status,
@@ -285,15 +306,22 @@ function handleCheck(req, res) {
       warnings,
       suggestions,
       files: normFiles,
+      executionStatus: 'Pending',
+      executionOutput: '',
+      fileContents
     });
 
-    report.id = reportId;
-    res.json(report);
+    // Rename the zip file so the stream endpoint can find it
+    const newZipPath = path.join(UPLOAD_DIR, `report-${reportId}.zip`);
+    fs.renameSync(zipPath, newZipPath);
+
+    res.json({ id: reportId, status: 'Pending' });
   } catch (err) {
     console.error('Analysis error:', err);
     res.status(500).json({ error: 'Failed to analyse the ZIP file.' });
-  } finally {
-    fs.unlink(zipPath, () => {});
+    if (zipPath && fs.existsSync(zipPath)) {
+      fs.unlinkSync(zipPath);
+    }
   }
 }
 
@@ -466,9 +494,165 @@ app.get('/api/reports/:id', requireLogin, (req, res) => {
   res.json(report);
 });
 
+app.delete('/api/reports/:id', requireLogin, (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid report ID.' });
+
+  const success = deleteReport(id, req.session.userId);
+  if (!success) return res.status(404).json({ error: 'Report not found or not authorized.' });
+
+  res.json({ message: 'Report deleted successfully.' });
+});
+
 app.get('/api/stats', requireLogin, (req, res) => {
   const stats = getStats(req.session.userId);
   res.json(stats);
+});
+
+app.get('/api/stream/:id', requireLogin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).send('Invalid ID');
+
+  const report = getById(id, req.session.userId);
+  if (!report) return res.status(404).send('Not found');
+  if (report.executionStatus !== 'Pending') {
+    return res.status(400).send('Execution already finished');
+  }
+
+  // Setup SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const zipPath = path.join(UPLOAD_DIR, `report-${id}.zip`);
+  if (!fs.existsSync(zipPath)) {
+    sendEvent('error', 'ZIP file not found.');
+    sendEvent('done', { status: 'Failed', output: 'ZIP file missing.' });
+    updateExecutionResults(id, 'Failed', 'ZIP file missing.');
+    return res.end();
+  }
+
+  const tempDirName = `test-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const tempDirPath = path.join(UPLOAD_DIR, tempDirName);
+
+  let fullOutput = '';
+  let finalStatus = 'Passed';
+
+  try {
+    sendEvent('status', 'Extracting files...');
+    fs.mkdirSync(tempDirPath);
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(tempDirPath, true);
+
+    const imageMap = { node: 'node:20', python: 'python:3.11', java: 'openjdk:17' };
+    const dockerImage = imageMap[report.language] || 'ubuntu:latest';
+
+    let containerCmd = report.runCmd;
+    if (report.setupCmd) {
+      containerCmd = `${report.setupCmd} && ${report.runCmd}`;
+    }
+
+    sendEvent('status', 'Running in Docker...');
+    const containerName = `fresh-comp-${id}`;
+    const dockerArgs = [
+      'run', '--rm', '--name', containerName, '-v', `${tempDirPath}:/app`, '-w', '/app',
+      dockerImage, 'sh', '-c', containerCmd
+    ];
+
+    const child = spawn('docker', dockerArgs);
+    let isPulling = false;
+    let killed = false;
+
+    // Timeout logic
+    const timeoutTimer = setTimeout(() => {
+      killed = true;
+      child.kill();
+      try {
+        execSync(`docker rm -f ${containerName}`, { stdio: 'ignore' });
+      } catch (e) {
+        // Ignore if already gone
+      }
+      
+      const lowerOutput = fullOutput.toLowerCase();
+      const hasError = lowerOutput.includes('traceback') || 
+                       lowerOutput.includes('error:') || 
+                       lowerOutput.includes('exception:') ||
+                       lowerOutput.includes('npm err!');
+                       
+      if (!hasError && fullOutput.trim().length > 0) {
+        const msg = '\n\n[SUCCESS] Execution timed out (Likely infinite loop / GUI app).';
+        sendEvent('stderr', msg);
+        fullOutput += msg;
+        finalStatus = 'Passed (Infinite Loop / GUI)';
+      } else {
+        const msg = '\n\n[ERROR] Execution timed out after 120 seconds.';
+        sendEvent('stderr', msg);
+        fullOutput += msg;
+        finalStatus = 'Failed';
+      }
+    }, 120000);
+
+    child.stdout.on('data', (data) => {
+      const text = data.toString();
+      fullOutput += text;
+      sendEvent('stdout', text);
+    });
+
+    child.stderr.on('data', (data) => {
+      const text = data.toString();
+      if (text.includes('Pulling from library')) {
+        if (!isPulling) {
+          isPulling = true;
+          sendEvent('status', `Downloading ${dockerImage} image...`);
+        }
+      } else if (isPulling && text.includes('Downloaded newer image')) {
+        isPulling = false;
+        sendEvent('status', 'Running in Docker...');
+      }
+      
+      fullOutput += text;
+      sendEvent('stderr', text);
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timeoutTimer);
+      if (code !== 0 && !killed) {
+        finalStatus = 'Failed';
+      }
+      const finalOutput = fullOutput.trim() || '[No output]';
+      updateExecutionResults(id, finalStatus, finalOutput);
+      sendEvent('done', { status: finalStatus, output: finalOutput });
+      res.end();
+
+      // Cleanup
+      try {
+        if (fs.existsSync(tempDirPath)) fs.rmSync(tempDirPath, { recursive: true, force: true });
+        if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      } catch(e){}
+    });
+
+  } catch (err) {
+    console.error("Execution error:", err);
+    finalStatus = 'Failed';
+    const errorMsg = `\nSystem Error: ${err.message}`;
+    fullOutput += errorMsg;
+    sendEvent('stderr', errorMsg);
+    updateExecutionResults(id, finalStatus, fullOutput.trim());
+    sendEvent('done', { status: finalStatus, output: fullOutput.trim() });
+    res.end();
+    
+    // Cleanup
+    try {
+      if (fs.existsSync(tempDirPath)) fs.rmSync(tempDirPath, { recursive: true, force: true });
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+    } catch(e){}
+  }
 });
 
 /* ═══════════════════════════════════════════════════
